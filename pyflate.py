@@ -306,7 +306,6 @@ def gzip_main(field):
         lastbit = b.readbits(1)
         #print "last bit", hex(lastbit)
         blocktype = b.readbits(2)
-        print "deflate-blocktype", blocktype, 'beginning at', header_start
 
         #print 'raw block data at', b.tell()
         if blocktype == 0:
@@ -318,7 +317,7 @@ def gzip_main(field):
             #print 'raw data at', b.tell(), 'bits', b.tellbits() - bheader_start
             #print 'header 0 count 0 bits', b.tellbits() - bheader_start
             for i in range(length):
-                out.append(chr(b.readbits(8)))
+                out.append((-1, 1))
             #print 'linear', b.tell()[0], 'count', length, 'bits', b.tellbits() - bheader_start
 
         elif blocktype == 1 or blocktype == 2: # Huffman
@@ -394,7 +393,7 @@ def gzip_main(field):
                         literal_start = lz_start
                     literal_count += 1
                     #print 'found literal', `chr(r)`
-                    out.append(chr(r))
+                    out.append((-1, 1))
                 elif r == 256:
                     if literal_count > 0:
                         #print 'add 0 count', literal_count, 'bits', lz_start-literal_start, 'data', `out[-literal_count:]`
@@ -414,13 +413,7 @@ def gzip_main(field):
                     if 0 <= r1 <= 29:
                         distance = distance_base(r1) + b.readbits(extra_distance_bits(r1))
                         cached_length = length
-                        while length > distance:
-                            out += out[-distance:]
-                            length -= distance
-                        if length == distance:
-                            out += out[-distance:]
-                        else:
-                            out += out[-distance:length-distance]
+                        out.append((distance, length))
                         #print 'copy', -distance, 'count', cached_length, 'bits', b.tellbits() - lz_start, 'data', `out[-cached_length:]`
                     elif 30 <= r1 <= 31:
                         raise "illegal unused distance symbol in use @" + `b.tell()`
@@ -441,11 +434,10 @@ def gzip_main(field):
     #print len(out)
     next_unused = b.tell()
     #print 'deflate-end-of-stream', 5, 'beginning at', footer_start, 'raw data at', next_unused, 'bits', b.tellbits() - bfooter_start
-    print 'deflate-end-of-stream'
     #print 'crc', hex(crc), 'final length', final_length
     #print 'header 0 count 0 bits', b.tellbits()-bfooter_start
 
-    return "".join(out)
+    return out
 
 import sys
 
@@ -456,22 +448,32 @@ def _main():
 
     magic = field.readbits(16)
     if magic == 0x1f8b: # GZip
-        out = gzip_main(field)
+        out_raw = gzip_main(field)
     else:
         raise "Unknown file magic "+hex(magic)+", not a gzip file"
 
-    f = open('out', 'w')
-    f.write(out)
-    f.close()
+    out = [ ]
+    offset = 0
+    for (d, l) in out_raw:
+        if d != -1:
+            out.append((offset, d, l))
+        offset += l
+    print "digraph G {"
+    for (i, (off, d, l)) in enumerate(out):
+        if d == -1:
+            continue
+        print '%d [label="%d\\n%d"]' % (i, i, l)
+        sources = [ j for (j, (off1, d1, l1)) in enumerate(out) if off - d < off1 + l1 and off1 < off - d + l ]
+        for j in sources:
+            print "%d -> %d;" % (i, j)
+    print "}"
     input.close()
         
 if __name__=='__main__':
     if len(sys.argv) != 2:
         program = sys.argv[0]
         print program +':', 'usage:', program, '<filename.gz>|<filename.bz2>'
-        print '\tThe contents will be decoded and decompressed plaintext written to "./out".'
         sys.exit(0)
 
-    profile_code = False
     _main()
 
